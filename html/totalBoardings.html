@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>ptViz - Adelaide</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #ffffff;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+				font-weight: bold;
+
+				background-color: #050505;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#detailsHidden {
+				position: fixed;
+				left: 0;
+				top: 0;
+				font-size:12px;
+				padding: 8px;
+			}
+			
+			#detailsShown {
+				position: fixed;
+				left: 0;
+				top: 0;
+				font-size:12px;
+				text-align:left;
+				padding: 8px;
+				visibility: hidden;
+			}
+			
+			#title {
+				position: fixed;
+				bottom: 0;
+				right: 0;
+				font-size:22px;
+				padding: 20px;
+			}
+			
+			#stats {
+				position: fixed;
+				bottom: 0;
+				left: 0;
+				font-size:12px;
+				padding: 20px;
+				text-align:left;
+				font-family:Consolas,Monaco,Lucida Console,Liberation Mono,DejaVu Sans Mono,Bitstream Vera Sans Mono,Courier New, monospace;
+			}
+
+			a {
+
+				color: #ffffff;
+			}
+
+			#oldie a { color:#da0 }
+		</style>
+	</head>
+	<body>
+
+		<script>
+			function showDetails()
+			{
+				document.getElementById("detailsShown").style.visibility = "visible";
+				document.getElementById("detailsHidden").style.visibility = "hidden";
+			}
+			
+			function hideDetails()
+			{
+				document.getElementById("detailsHidden").style.visibility = "visible";
+				document.getElementById("detailsShown").style.visibility = "hidden";
+			}
+			
+		</script>
+
+		<div id="container"></div>
+		<div id="detailsHidden"> <a href="#" onclick="showDetails();"><img src="./img/info_icon.png"></a> </div>
+		<div id="detailsShown">
+			Passenger boarding number are for the week ending 22-6-2014<sup>*</sup> <br>
+			
+			Original passenger boarding dataset from data.sa can be found <a href="http://www.data.sa.gov.au/dataset/public-transport-services">here</a>.<br> 
+			Also utilises stop locations obtained <a href="http://www.data.sa.gov.au/dataset/transit-feed-specification">here</a>.<br>
+			<sup>*</sup>(more recent data appears potentially incomplete).<br><br>
+			Controls:<br>
+			&nbsp;Left mouse - Orbit <br>
+			&nbsp;Middle mouse - Zoom <br>
+			&nbsp;Right mouse - Pan <br><br>
+			
+		<a href="#" onclick="hideDetails();">(Hide)</a> </div>
+		<div id="title">Adelaide Public Transport Passenger <br>Boardings by Stop Location</div>
+		<div id="stats"></div>
+
+		<script src="js/libs/three/three.min.js"></script>
+		<script src="js/libs/three/OrbitControls.js"></script>
+		<script src="js/libs/three/Detector.js"></script>
+		<script src="js/libs/three/stats.min.js"></script>
+		
+		<script>
+
+			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+			var container;
+			var camera, controls, scene, renderer;
+
+			var jsonTest = '{"x":0,"y":0}';
+			var jsonObj = JSON.parse(jsonTest);
+			
+			//var jsonTest2 = require('dataTest/stops.json'); 
+			
+			//var jsonStops = JSON.parse(stops);
+			
+			function AJAX_JSON_Req( url )
+			{
+				var AJAX_req = new XMLHttpRequest();
+				AJAX_req.open( "GET", url, true );
+				AJAX_req.setRequestHeader("Content-type", "application/json");
+			 
+				AJAX_req.onreadystatechange = function()
+				{
+					if( AJAX_req.readyState == 4 && AJAX_req.status == 200 )
+					{
+						var response = JSON.parse( AJAX_req.responseText );
+					
+						init( response.stops );
+						animate();
+						
+						console.log ( 'Started!' + response.stops.length );
+					}
+				}
+				AJAX_req.send();
+			}
+			 
+			AJAX_JSON_Req( './data/stops.json' );
+			
+			function getColorForTransportMode( mode, color ) 
+			{
+				color.set(0,1,0.25);
+				if( mode == 1 )
+					color.set(0,0.25,1);
+				if( mode == 2 )
+					color.set(1,0.2,0);
+			}
+			
+			function init( stops ) {
+
+				container = document.getElementById( 'container' );
+
+				camera = new THREE.PerspectiveCamera( 40, window.innerWidth / window.innerHeight, 0.01, 300 );
+				camera.up.set(0,0,1)
+			//	var aspect = window.innerWidth / window.innerHeight;
+				//camera = new THREE.OrthographicCamera( -aspect, aspect, 1, -1, 0.1, 100 );
+				camera.position.z = 1.5;
+				
+				controls = new THREE.OrbitControls( camera );
+				controls.addEventListener( 'change', render );
+
+				scene = new THREE.Scene();
+				
+				initPlane();
+				
+				geometry = new THREE.Geometry();
+				sprite = THREE.ImageUtils.loadTexture( "textures/sprites/disc.png" );
+
+/*
+				for ( i = 0; i < 1000; i ++ ) {
+
+					var vertex = new THREE.Vector3();
+					vertex.x = 2 * Math.random() - 1;
+					vertex.y = 2 * Math.random() - 1;
+					
+					///vertex.x = jsonObj.x;
+					//vertex.y = jsonObj.y;
+					
+					vertex.z = 0;
+
+					geometry.vertices.push( vertex );
+
+				}
+				*/
+				
+				/*
+				stops.forEach(function(stop) {
+					var vertex = new THREE.Vector3();
+					vertex.x = stop.X;
+					vertex.y = stop.Y;
+					vertex.z = 0;
+
+					geometry.vertices.push( vertex );
+				});
+
+				material = new THREE.ParticleSystemMaterial( { size: 5, sizeAttenuation: false, map: sprite, transparent: true } );
+				material.color.setHSL( 0.5, 0.5, 0.5 );
+
+				particles = new THREE.ParticleSystem( geometry, material );
+				particles.sortParticles = true;
+				scene.add( particles );
+				*/
+					
+				var stopCount = stops.length
+				
+				var geometry = new THREE.BufferGeometry();
+				var material = new THREE.LineBasicMaterial({ vertexColors: true });
+
+				geometry.addAttribute( 'position', new Float32Array( stopCount * 6 ), 3 );
+				geometry.addAttribute( 'color', new Float32Array( stopCount * 6 ), 3 );
+
+				var positions = geometry.getAttribute( 'position' ).array;
+				var colors = geometry.getAttribute( 'color' ).array;
+				
+				var modeColor = new THREE.Vector3( 0, 0, 0 );
+				
+				var totalBoardingsPerMode = [0,0,0];
+				var totalStopsPerMode = [0,0,0];
+				
+				var stopIndex = 0;
+				stops.forEach(function(stop) {
+					// positions
+					var i = stopIndex * 6
+					positions[ i ] = stop.X;
+					positions[ i + 1 ] = stop.Y;
+					positions[ i + 2 ] = 0;
+					
+					positions[ i + 3 ] = stop.X;
+					positions[ i + 4 ] = stop.Y;
+					positions[ i + 5 ] = 0.005 + 0.00005 * stop.TotalBoarded;
+					
+					//console.log ( 'stop.TotalBoarded =' + stop.TotalBoarded );
+
+					getColorForTransportMode( stop.Mode, modeColor );
+					
+					totalBoardingsPerMode[stop.Mode] += stop.TotalBoarded;
+					totalStopsPerMode[stop.Mode] += 1;
+					
+					// colors
+					colors[ i ] = modeColor.x;
+					colors[ i + 1 ] = modeColor.y;
+					colors[ i + 2 ] = modeColor.z;
+					
+					colors[ i + 3 ] = modeColor.x;
+					colors[ i + 4 ] = modeColor.y;
+					colors[ i + 5 ] = modeColor.z;
+					
+					stopIndex++;
+				});
+				
+				console.log ( 'Bus   =' + totalBoardingsPerMode[0] );
+				console.log ( 'Train =' + totalBoardingsPerMode[1] );
+				console.log ( 'Tram =' + totalBoardingsPerMode[2] );
+				
+				console.log ( 'Bus =' + totalStopsPerMode[0] );
+				console.log ( 'Train =' + totalStopsPerMode[1] );
+				console.log ( 'Tram =' + totalStopsPerMode[2] );
+				
+				<!-- quick hacky display of numbers ->
+				document.getElementById("stats").innerHTML = "Totals"
+												+ "<br><span style='color:#00FF00;'>Bus: &nbsp;" + totalBoardingsPerMode[0] + "</span>"
+												+ "<br><span style='color:blue;'>Train: " + totalBoardingsPerMode[1] + "</span>"
+												+ "<br><span style='color:red;'>Tram:  &nbsp;" + totalBoardingsPerMode[2] + "</span>"
+				
+				geometry.computeBoundingSphere();
+
+				mesh = new THREE.Line( geometry, material, THREE.LinePieces );
+				scene.add( mesh );
+			
+				
+				// boxes are slow :(
+				/*
+				var material = new THREE.MeshBasicMaterial( { color:0xFF0000 } );
+				var geometry = new THREE.BoxGeometry( 0.001, 0.001, 0.001 );
+				
+				stops.forEach(function(stop) {
+					
+					mesh = new THREE.Mesh( geometry, material );
+					mesh.position.x = stop.X;
+					mesh.position.y = stop.Y;
+					mesh.position.z = 0;
+					scene.add( mesh );
+				});
+				*/
+	
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				container.appendChild( renderer.domElement );
+
+				onWindowResize();
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+			}
+			
+			function initPlane()
+			{
+				var geometry = new THREE.BoxGeometry( 3.55, 3.55, 0 );
+
+				var texture = THREE.ImageUtils.loadTexture( './img/bg_dark.png' );
+
+				var material = new THREE.MeshBasicMaterial( { map: texture } );
+
+				mesh = new THREE.Mesh( geometry, material );
+				mesh.position.x = -0.33;
+				mesh.position.y = -0.175;
+				mesh.position.z = -0.001;
+				scene.add( mesh );
+				
+				
+			}
+
+			function onWindowResize( event ) {
+
+				
+				// Perpective
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				
+				
+				// Ortho
+				/*
+				{
+					var aspect = window.innerWidth / window.innerHeight;
+					
+					camera.top = 1;
+					camera.bottom = -1;
+					
+					var halfWidth = aspect;
+					
+					camera.left = -halfWidth;
+					camera.right = halfWidth;
+					
+					camera.updateProjectionMatrix();
+
+					renderer.setSize( window.innerWidth, window.innerHeight );
+				}
+				*/
+
+			}
+
+			//
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				render();
+			}
+
+			function render() {
+
+				renderer.render( scene, camera );
+			}
+
+		</script>
+
+	</body>
+</html>

@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>ptViz - Adelaide</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #ffffff;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+				font-weight: bold;
+
+				background-color: #050505;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#info {
+				position: fixed;
+				bottom: 0;
+				right: 0;
+				font-size:22px;
+				padding: 20px;
+			}
+			
+			#timeDisplay {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 10px;
+				font-size:22px;
+			}
+			
+			#loadingDisplay {
+				position: absolute;
+			  margin: auto;
+			  top: 0;
+			  right: 0;
+			  bottom: 0;
+			  left: 0;
+			  width: 300px;
+			  height: 200px;
+			  font-size:16px;
+			}
+
+			#detailsHidden {
+				position: fixed;
+				left: 0;
+				top: 0;
+				font-size:12px;
+				padding: 8px;
+			}
+			
+			#detailsShown {
+				position: fixed;
+				left: 0;
+				top: 0;
+				font-size:12px;
+				text-align:left;
+				padding: 8px;
+				visibility: hidden;
+			}
+
+			#stats {
+				position: fixed;
+				bottom: 0;
+				left: 0;
+				font-size:12px;
+				padding: 20px;
+				text-align:left;
+				font-family:Consolas,Monaco,Lucida Console,Liberation Mono,DejaVu Sans Mono,Bitstream Vera Sans Mono,Courier New, monospace;
+			}
+			a {
+
+				color: #ffffff;
+			}
+
+			#oldie a { color:#da0 }
+		</style>
+	</head>
+	<body>
+
+		<script>
+			function showDetails()
+			{
+				document.getElementById("detailsShown").style.visibility = "visible";
+				document.getElementById("detailsHidden").style.visibility = "hidden";
+				
+				console.log ( 'showDetails' );
+			}
+			
+			function hideDetails()
+			{
+				document.getElementById("detailsHidden").style.visibility = "visible";
+				document.getElementById("detailsShown").style.visibility = "hidden";
+			}
+			
+		</script>
+
+		<div id="container"></div>
+		<div id="timeDisplay"></div>
+		<div id="detailsHidden"> <a href="#" onclick="showDetails();"><img src="./img/info_icon.png"></a> </div>
+		<div id="detailsShown">
+			Based on Transit Feed Specification courtesy of <a href="http://www.data.sa.gov.au/dataset/public-transport-services">data.sa</a>.<br> 
+			Projected vehicle positions are for a single average weekday.<br>
+			Passenger boarding numbers also from <a href="http://www.data.sa.gov.au/dataset/public-transport-services">data.sa</a>.<br><br>
+			Controls:<br>
+			&nbsp;Left mouse - Orbit <br>
+			&nbsp;Middle mouse - Zoom <br>
+			&nbsp;Right mouse - Pan <br><br>
+		<a href="#" onclick="hideDetails();">(Hide)</a> </div>
+		<div id="info">Adelaide Public Transport Weekday Trips</div>
+		
+		<div id="loadingDisplay">Loading... please wait</div>
+		<div id="stats"></div>
+
+		<script src='js/libs/dat.gui.min.js'></script>
+		
+		<script src="js/libs/three/three.min.js"></script>
+		<script src="js/libs/three/OrbitControls.js"></script>
+		<script src="js/libs/three/Detector.js"></script>
+		<script src="js/libs/three/stats.min.js"></script>
+		
+		<script type="x-shader/x-vertex" id="vertexshader">
+
+			attribute float size;
+			attribute vec3 customColor;
+
+			varying vec3 vColor;
+
+			void main() {
+
+				vColor = customColor;
+
+				vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+
+				gl_PointSize = size;
+
+				gl_Position = projectionMatrix * mvPosition;
+			}
+
+		</script>
+
+		<script type="x-shader/x-fragment" id="fragmentshader">
+
+			uniform sampler2D texture;
+
+			varying vec3 vColor;
+
+			void main() {
+
+				gl_FragColor = vec4( vColor, 1.0 );
+				gl_FragColor = gl_FragColor * texture2D( texture, gl_PointCoord );
+			}
+
+		</script>
+		
+		<script>
+			
+			var g_fizedZ = 0.006;
+			var g_minTime = 200;
+			var g_maxTime = 1600;
+			var g_StopsJSON = null;
+			var g_TripsJSON = null;
+			var g_StopIDtoStopMap = {};
+			var g_TripRenderItems = [];
+			var g_tripGeometry;
+			
+			var g_tempVec0 = new THREE.Vector3();
+			var g_tempVec1 = new THREE.Vector3();
+			
+			var g_particleAttributes = {
+
+				size: {	type: 'f', value: [] },
+				customColor: { type: 'c', value: [] }
+			};
+			
+			var g_parameters = 
+			{
+				time_minutes: g_minTime + 50,
+				playing:true
+			};
+			
+			var TripRenderItem = function(tripJSON)
+			{ 
+				this.m_tripJSON = tripJSON;
+				this.m_vertex = new THREE.Vector3();
+				
+				this.m_startTime = tripJSON.Stops[0].TArr;
+				this.m_endTime = tripJSON.Stops[tripJSON.Stops.length-1].TDep;
+				
+				this.getStopPosition(0,this.m_vertex);
+			}
+			
+			TripRenderItem.prototype.getStopPosition = function(index, resultPos) 
+			{
+				var stopID = this.m_tripJSON.Stops[index].StopID;
+				var stopData = g_StopIDtoStopMap[stopID];
+				
+				resultPos.x = stopData.X;
+				resultPos.y = stopData.Y;
+				resultPos.z = g_fizedZ;
+			}
+			
+			TripRenderItem.prototype.isActive = function(t) 
+			{
+				if( t < this.m_startTime || t > this.m_endTime )
+					return false;
+				
+				return true;
+			}
+			
+			TripRenderItem.prototype.getMode = function() 
+			{
+				return this.m_tripJSON.Mode;
+			}
+			
+			TripRenderItem.prototype.getSize = function(t) 
+			{
+				if( this.isActive(t) )
+					return 7;
+				
+				return 0;
+			}
+			
+			TripRenderItem.prototype.getPosition = function(t) 
+			{
+				var stopCount = this.m_tripJSON.Stops.length;
+				
+				if( !this.isActive(t) )
+				{
+					this.m_vertex.z = -1000;
+					return this.m_vertex;
+				}
+				
+				for(var i = 1; i < stopCount; i++) 
+				{
+					var nextStopArriveTime = this.m_tripJSON.Stops[i].TArr;
+					if( t < nextStopArriveTime )
+					{
+						var prevStopDepTime = this.m_tripJSON.Stops[i-1].TDep;
+						
+						var alpha = Math.max(0,(t - prevStopDepTime) / (nextStopArriveTime - prevStopDepTime));
+						
+						this.getStopPosition(i-1,this.m_vertex);
+						this.getStopPosition(i,g_tempVec1);
+						
+						this.m_vertex.lerp(g_tempVec1,alpha);
+						
+						break;
+					}
+				}
+				
+				return this.m_vertex;
+			}
+			
+			function pad2(number) {
+				return (number < 10 ? '0' : '') + number
+			}
+				
+			function updateDisplayTime()
+			{
+				var value = g_parameters.time_minutes;
+				var hours = Math.floor(value / 60);
+				var mins = value - (hours * 60);
+				var wholeMins = Math.floor(mins);
+				var remMins = mins - wholeMins;
+				
+				document.getElementById("timeDisplay").innerHTML = (hours%24) + ':' + pad2(wholeMins) + ':' + pad2(remMins * 60);
+					
+			}
+			
+			function BuildGUI(  )
+			{
+				var gui = new dat.GUI({
+						width : 320
+					});
+							
+				var timeParameter = gui.add( g_parameters, 'time_minutes' ).min(g_minTime).max(g_maxTime).step(0.25).listen();
+				
+				gui.add( g_parameters, 'playing' );
+				
+				timeParameter.onChange(function(value) 
+				{
+					updateDisplayTime();
+					
+					controls.enabled = false;
+				});
+			}
+
+			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+			BuildGUI();
+
+			var container;
+			var camera, controls, scene, renderer;
+
+			function checkDependancies()
+			{
+				if( g_StopsJSON != null && g_TripsJSON != null )
+				{
+					document.getElementById("loadingDisplay").innerHTML = "";
+					init();
+					animate();
+				}
+			}
+			
+			function onStopsLoaded( response )
+			{
+				g_StopsJSON = response.stops;
+				checkDependancies();
+			}
+			
+			function onTripsLoaded( response )
+			{
+				g_TripsJSON = response.Trips;
+				checkDependancies();
+			}
+			
+			function AJAX_JSON_Req( url, callback )
+			{
+				var AJAX_req = new XMLHttpRequest();
+				AJAX_req.open( "GET", url, true );
+				AJAX_req.setRequestHeader("Content-type", "application/json");
+			 
+				AJAX_req.onreadystatechange = function()
+				{
+					if( AJAX_req.readyState == 4 && AJAX_req.status == 200 )
+					{
+						var response = JSON.parse( AJAX_req.responseText );
+					
+						callback( response );
+					}
+				}
+				AJAX_req.send();
+			}
+			 
+			AJAX_JSON_Req( './data/stops.json', onStopsLoaded );
+			AJAX_JSON_Req( './data/trips.json', onTripsLoaded );
+			
+			function getColorForTransportMode( mode, color ) 
+			{
+				color.setRGB(0,1,0);
+				if( mode == 1 )
+					color.setRGB(0,0,1);
+				if( mode == 2 )
+					color.setRGB(1,0,0);
+			}
+			
+			function init() {
+
+				container = document.getElementById( 'container' );
+
+				camera = new THREE.PerspectiveCamera( 40, window.innerWidth / window.innerHeight, 0.01, 300 );
+				camera.up.set(0,0,1)
+			//	var aspect = window.innerWidth / window.innerHeight;
+				//camera = new THREE.OrthographicCamera( -aspect, aspect, 1, -1, 0.1, 100 );
+				camera.position.z = 1.5;
+				
+				controls = new THREE.OrbitControls( camera );
+				controls.addEventListener( 'change', render );
+
+				scene = new THREE.Scene();
+				
+				initPlane();
+				
+				g_StopsJSON.forEach(function(stop) {
+					g_StopIDtoStopMap[stop.ID] = stop
+				});
+				
+				uniforms = {
+
+					color:     { type: "c", value: new THREE.Color( 0xffffff ) },
+					texture:   { type: "t", value: THREE.ImageUtils.loadTexture( "./img/spark4.png" ) },
+				};
+
+				var shaderMaterial = new THREE.ShaderMaterial( {
+
+					uniforms: 		uniforms,
+					attributes:     g_particleAttributes,
+					vertexShader:   document.getElementById( 'vertexshader' ).textContent,
+					fragmentShader: document.getElementById( 'fragmentshader' ).textContent,
+
+					blending: 		THREE.NormalBlending,
+					depthTest: 		true,
+					transparent:	true
+				});
+				
+				g_tripGeometry = new THREE.Geometry();
+
+				var values_size = g_particleAttributes.size.value;
+				var values_color = g_particleAttributes.customColor.value;
+
+				var vIndex =0;
+				g_TripsJSON.forEach(function(trip) {
+					
+					var renderItem = new TripRenderItem( trip );
+							
+					g_TripRenderItems.push( renderItem );
+					
+					g_tripGeometry.vertices.push( renderItem.m_vertex );
+					
+					values_size[ vIndex ] = renderItem.getSize( g_parameters.time_minutes );
+					values_color[ vIndex ] = new THREE.Color( 0xffaa00 );
+					
+					getColorForTransportMode(trip.Mode, values_color[ vIndex ]);
+					
+					//values_color[ vIndex ].setRGB(1,0,0);
+					
+					vIndex++;
+				});
+				
+				particles = new THREE.ParticleSystem( g_tripGeometry, shaderMaterial );
+	
+				particles.sortParticles = true;
+				scene.add( particles );
+				
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				container.appendChild( renderer.domElement );
+
+				onWindowResize();
+
+				window.addEventListener( 'resize', onWindowResize, false );
+				window.addEventListener( 'mouseup', onDocumentMouseUp, false );
+			}
+			
+			function initPlane()
+			{
+				var geometry = new THREE.BoxGeometry( 3.55, 3.55, 0 );
+
+				var texture = THREE.ImageUtils.loadTexture( './img/bg_dark.png' );
+
+				var material = new THREE.MeshBasicMaterial( { map: texture } );
+
+				mesh = new THREE.Mesh( geometry, material );
+				mesh.position.x = -0.33;
+				mesh.position.y = -0.175;
+				mesh.position.z = -0.001;
+				scene.add( mesh );
+			}
+			
+			function onDocumentMouseUp( event ) 
+			{
+				controls.enabled = true;
+			}
+
+			function onWindowResize( event ) {
+
+				
+				// Perpective
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				
+				// Ortho
+				/*
+				{
+					var aspect = window.innerWidth / window.innerHeight;
+					
+					camera.top = 1;
+					camera.bottom = -1;
+					
+					var halfWidth = aspect;
+					
+					camera.left = -halfWidth;
+					camera.right = halfWidth;
+					
+					camera.updateProjectionMatrix();
+
+					renderer.setSize( window.innerWidth, window.innerHeight );
+				}
+				*/
+
+			}
+
+			//
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				var activeVehicles = [0,0,0];
+				var values_size = g_particleAttributes.size.value;
+				var t = g_parameters.time_minutes;
+				for (index = 0; index < g_TripRenderItems.length; ++index) 
+				{
+					var renderItem = g_TripRenderItems[index];
+					g_tripGeometry.vertices[index] = renderItem.getPosition( t );
+					values_size[ index ] = renderItem.getSize( t );
+					
+					if( renderItem.isActive(t) )
+					{
+						activeVehicles[ renderItem.getMode() ]++;
+					}
+				}
+				
+				<!-- quick hacky display of numbers ->
+				document.getElementById("stats").innerHTML = "Total Active"
+												+ "<br><span style='color:#00FF00;'>#Buses: " + activeVehicles[0] + "</span>"
+												+ "<br><span style='color:blue;'>#Trains: " + activeVehicles[1] + "</span>"
+												+ "<br><span style='color:red;'>#Trams:  &nbsp;" + activeVehicles[2] + "</span>"
+
+				render();
+				
+				if( g_parameters.playing )
+				{
+					g_parameters.time_minutes += 0.25;
+					
+					if( g_parameters.time_minutes > g_maxTime )
+					{
+						g_parameters.time_minutes = g_minTime;
+					}
+					
+					updateDisplayTime();
+				}
+
+			}
+
+			function render() {
+
+				renderer.render( scene, camera );
+			}
+
+		</script>
+
+	</body>
+</html>

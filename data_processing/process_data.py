@@ -7,6 +7,9 @@ import math
 from pprint import pprint
 
 
+sourceDataPath = "../src_data/"
+outputDataPath = "../html/data/"
+
 tripIDToRouteMapping = {}
 tripIDToModeMapping = {}
 
@@ -25,7 +28,7 @@ def TransportModeFromRouteID( routeID ):
 # finds which trips are weekday services
 # creates mapping from trip ID to route (and route type)
 def buildTripMetaData():
-	tripFileName = "../google_transit/trips.txt" 
+	tripFileName = sourceDataPath + "google_transit/trips.txt" 
 	inputFile = open(tripFileName, 'r')
 
 	totalTripCnt = 0
@@ -67,9 +70,8 @@ def convertTimeToMinutes( inTime ):
 	return (seconds/60) + minutes + (60 * hours)
 	
 def processStopTimes():
-	tripFileName = "../google_transit/stop_times.txt" 
+	tripFileName = sourceDataPath + "google_transit/stop_times.txt" 
 	inputFile = open(tripFileName, 'r')
-
 
 	earlyTime = sys.maxint
 	lateTime = 0
@@ -147,12 +149,15 @@ allStops = {}
 allStopList = []
 
 totalBoardingAtStop = {}
+boardingsAtTripStop = {}	#Index by (tripID, stopID) tuple
 transportTypeAtStop = {}
+
+stopIDtoStopCode = {}
 
 
 def buildStopJSON():
 	
-	tripFileName = "../google_transit/stops.txt" 
+	tripFileName = sourceDataPath + "google_transit/stops.txt" 
 	inputFile = open(tripFileName, 'r')
 
 	totalStopCnt = 0
@@ -185,6 +190,9 @@ def buildStopJSON():
 		stopEntry["Mode"] = transportTypeAtStop.get(stopCode, 0)
 		#stopEntry["type"] = 0
 		
+		
+		stopIDtoStopCode[int(fields[0])] = stopCode
+		
 		minLat = min(minLat,slat)
 		minLong = min(minLong,slong)
 		
@@ -197,11 +205,8 @@ def buildStopJSON():
 
 	allStops["stops"] = allStopList
 
-#	fo = open('../mrdoob-three.js-d3cb4e7/dataTest/stops.js', "wb")
-#	fo.write( "var stops = '" + json.dumps(allStopList) + "';" );
-#	fo.close()
 
-	with open('../mrdoob-three.js-d3cb4e7/dataTest/stops.json', 'w') as outfile:
+	with open(outputDataPath + 'stops.json', 'w') as outfile:
 		json.dump(allStops, outfile, indent=4)
 
 	print "totalStopCnt",totalStopCnt
@@ -259,7 +264,7 @@ def processSuburbs():
 
 def processPassengers():
 	
-	inputFile = open("../PTSBoardingSummary.CSV/PTSBoardingSummary.CSV", 'r')
+	inputFile = open(sourceDataPath + "PTSBoardingSummary.CSV/PTSBoardingSummary.CSV", 'r')
 
 	fo = open('mostRecentWeek.csv', "wb")
 
@@ -316,8 +321,19 @@ def processPassengersRecent():
 			totalBoardingAtStop[stopID] = totalBoardingAtStop.get(stopID, 0) + boarded
 			
 			routeID = fields[1].replace("\"","")
+			
+			tripID = int(fields[0].replace("\"",""))
+			
+			boardingsAtTripStop[ (tripID, stopID) ] = boarded
+			
+			b2 = boardingsAtTripStop.get((tripID, stopID), 0)
 
-			transportTypeAtStop[stopID] = TransportModeFromRouteID(routeID);
+		#	print "stopID",stopID
+		#	print "tripID",tripID
+		#	print "boarded",boarded
+		#	print "b2",b2
+		#	msvcrt.getch()
+			transportTypeAtStop[stopID] = TransportModeFromRouteID(routeID)
 
 		except ValueError:
 			continue
@@ -333,13 +349,16 @@ def processPassengersRecent():
 
 def buildTripsJSON():
 	
-	tripFileName = "../google_transit/stop_times.txt" 
+	tripFileName = sourceDataPath + "google_transit/stop_times.txt" 
 	inputFile = open(tripFileName, 'r')
 
 	allTripsList = []
 
 	lastTrip = None;
 	lastTripID = -1
+	
+	
+	totalBoardCnt = 0;
 	
 	totalCnt = 0
 	for line in inputFile:
@@ -373,9 +392,15 @@ def buildTripsJSON():
 				allTripsList.append(lastTrip)
 			
 			stopElement = {}
-			stopElement["StopID"] = int(fields[3])
+			stopElement["ID"] = stopID
 			stopElement["TArr"] = convertTimeToMinutes(fields[1])
 			stopElement["TDep"] = convertTimeToMinutes(fields[2])
+			
+			stopCode = stopIDtoStopCode.get(stopID, -1)
+			
+			stopElement["PCnt"] = boardingsAtTripStop.get((tripID, stopCode), 0)
+			
+			totalBoardCnt += boardingsAtTripStop.get((tripID, stopCode), 0)
 			
 			lastTrip["Stops"].append(stopElement)
 		
@@ -383,10 +408,11 @@ def buildTripsJSON():
 	
 	allTrips = {}
 	allTrips["Trips"] = allTripsList
-	with open('../mrdoob-three.js-d3cb4e7/dataTest/trips.json', 'w') as outfile:
+	with open(outputDataPath + 'trips.json', 'w') as outfile:
 		json.dump(allTrips, outfile)
 	
 	print "tripStops",totalCnt
+	print "totalBoardCnt in TRIPS",totalBoardCnt
 
 
 buildTripMetaData()

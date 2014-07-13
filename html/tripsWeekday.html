@@ -120,7 +120,6 @@
 		<script src="js/libs/three/three.min.js"></script>
 		<script src="js/libs/three/OrbitControls.js"></script>
 		<script src="js/libs/three/Detector.js"></script>
-		<script src="js/libs/three/stats.min.js"></script>
 		
 		<script type="x-shader/x-vertex" id="vertexshader">
 
@@ -166,7 +165,10 @@
 			var g_StopIDtoStopMap = {};
 			var g_TripRenderItems = [];
 			var g_tripGeometry;
+			var g_lineGeometry;
+			var g_boardingWindow = 1;
 			
+			// Just to avoid constantly constructing...
 			var g_tempVec0 = new THREE.Vector3();
 			var g_tempVec1 = new THREE.Vector3();
 			
@@ -179,7 +181,8 @@
 			var g_parameters = 
 			{
 				time_minutes: g_minTime + 50,
-				playing:true
+				playing:true,
+				showBoardings:false
 			};
 			
 			var TripRenderItem = function(tripJSON)
@@ -195,7 +198,7 @@
 			
 			TripRenderItem.prototype.getStopPosition = function(index, resultPos) 
 			{
-				var stopID = this.m_tripJSON.Stops[index].StopID;
+				var stopID = this.m_tripJSON.Stops[index].ID;
 				var stopData = g_StopIDtoStopMap[stopID];
 				
 				resultPos.x = stopData.X;
@@ -220,6 +223,22 @@
 			{
 				if( this.isActive(t) )
 					return 7;
+				
+				return 0;
+			}
+			
+			TripRenderItem.prototype.getBoardingsNear = function(t) 
+			{
+				var stopCount = this.m_tripJSON.Stops.length;
+				for(var i = 1; i < stopCount; i++) 
+				{
+					var stop = this.m_tripJSON.Stops[i];
+					
+					if( Math.abs( stop.TArr - t ) < g_boardingWindow || Math.abs( stop.TDep - t ) < g_boardingWindow )
+					{
+						return stop.PCnt;
+					}
+				}
 				
 				return 0;
 			}
@@ -280,6 +299,7 @@
 				var timeParameter = gui.add( g_parameters, 'time_minutes' ).min(g_minTime).max(g_maxTime).step(0.25).listen();
 				
 				gui.add( g_parameters, 'playing' );
+				gui.add( g_parameters, 'showBoardings' );
 				
 				timeParameter.onChange(function(value) 
 				{
@@ -354,8 +374,6 @@
 
 				camera = new THREE.PerspectiveCamera( 40, window.innerWidth / window.innerHeight, 0.01, 300 );
 				camera.up.set(0,0,1)
-			//	var aspect = window.innerWidth / window.innerHeight;
-				//camera = new THREE.OrthographicCamera( -aspect, aspect, 1, -1, 0.1, 100 );
 				camera.position.z = 1.5;
 				
 				controls = new THREE.OrbitControls( camera );
@@ -402,11 +420,9 @@
 					g_tripGeometry.vertices.push( renderItem.m_vertex );
 					
 					values_size[ vIndex ] = renderItem.getSize( g_parameters.time_minutes );
-					values_color[ vIndex ] = new THREE.Color( 0xffaa00 );
+					values_color[ vIndex ] = new THREE.Color( 0xffffff );
 					
 					getColorForTransportMode(trip.Mode, values_color[ vIndex ]);
-					
-					//values_color[ vIndex ].setRGB(1,0,0);
 					
 					vIndex++;
 				});
@@ -415,6 +431,56 @@
 	
 				particles.sortParticles = true;
 				scene.add( particles );
+				
+				
+				// Now add lines for each render item
+				var tripCount = g_TripRenderItems.length;
+				g_lineGeometry = new THREE.BufferGeometry();
+				g_lineGeometry.dynamic = true;
+				
+				var material = new THREE.LineBasicMaterial({ vertexColors: true });
+
+				g_lineGeometry.addAttribute( 'position', new Float32Array( tripCount * 6 ), 3 );
+				g_lineGeometry.addAttribute( 'color', new Float32Array( tripCount * 6 ), 3 );
+				
+				var positions = g_lineGeometry.getAttribute( 'position' ).array;
+				var colors = g_lineGeometry.getAttribute( 'color' ).array;
+				
+				var modeColor = new THREE.Color( 0xffffff );
+				var t = g_parameters.time_minutes;
+				for (index = 0; index < tripCount; ++index) 
+				{
+					var renderItem = g_TripRenderItems[index];
+					
+					renderItem.getStopPosition(0,g_tempVec0);
+					
+					// positions
+					var i = index * 6
+					positions[ i ] = g_tempVec0.x;
+					positions[ i + 1 ] = g_tempVec0.y;
+					positions[ i + 2 ] = g_fizedZ;
+					
+					positions[ i + 3 ] = g_tempVec0.x;
+					positions[ i + 4 ] = g_tempVec0.y;
+					positions[ i + 5 ] = g_fizedZ;
+					
+					getColorForTransportMode( renderItem.getMode(), modeColor );
+					
+					// colors
+					colors[ i ] = modeColor.r;
+					colors[ i + 1 ] = modeColor.g;
+					colors[ i + 2 ] = modeColor.b;
+					
+					colors[ i + 3 ] = modeColor.r;
+					colors[ i + 4 ] = modeColor.g;
+					colors[ i + 5 ] = modeColor.b;
+				}
+				
+				g_lineGeometry.computeBoundingSphere();
+
+				mesh = new THREE.Line( g_lineGeometry, material, THREE.LinePieces );
+				scene.add( mesh );
+				
 				
 				renderer = new THREE.WebGLRenderer( { antialias: true } );
 				container.appendChild( renderer.domElement );
@@ -447,39 +513,18 @@
 
 			function onWindowResize( event ) {
 
-				
 				// Perpective
 				camera.aspect = window.innerWidth / window.innerHeight;
 				camera.updateProjectionMatrix();
 
 				renderer.setSize( window.innerWidth, window.innerHeight );
-				
-				// Ortho
-				/*
-				{
-					var aspect = window.innerWidth / window.innerHeight;
-					
-					camera.top = 1;
-					camera.bottom = -1;
-					
-					var halfWidth = aspect;
-					
-					camera.left = -halfWidth;
-					camera.right = halfWidth;
-					
-					camera.updateProjectionMatrix();
-
-					renderer.setSize( window.innerWidth, window.innerHeight );
-				}
-				*/
-
 			}
-
-			//
 
 			function animate() {
 
 				requestAnimationFrame( animate );
+
+				var line_positions = g_lineGeometry.getAttribute( 'position' ).array;
 
 				var activeVehicles = [0,0,0];
 				var values_size = g_particleAttributes.size.value;
@@ -495,6 +540,45 @@
 						activeVehicles[ renderItem.getMode() ]++;
 					}
 				}
+				
+				if( g_parameters.showBoardings )
+				{
+					for (index = 0; index < g_TripRenderItems.length; ++index) 
+					{
+						var renderItem = g_TripRenderItems[index];
+						
+						var lineOffset = 0;
+						if( renderItem.isActive(t) )
+						{
+							lineOffset = 0.0025 * renderItem.getBoardingsNear(t);
+						}
+						
+						var i = index * 6
+						line_positions[ i ] = g_tripGeometry.vertices[index].x;
+						line_positions[ i + 1 ] = g_tripGeometry.vertices[index].y;
+						line_positions[ i + 2 ] = g_fizedZ;
+						
+						line_positions[ i + 3 ] = g_tripGeometry.vertices[index].x;
+						line_positions[ i + 4 ] = g_tripGeometry.vertices[index].y;
+						line_positions[ i + 5 ] = g_fizedZ + lineOffset;
+					}
+				}
+				else
+				{
+					for (index = 0; index < g_TripRenderItems.length; ++index) 
+					{
+						var renderItem = g_TripRenderItems[index];
+
+						var i = index * 6
+						line_positions[ i + 2 ] = -1;
+						line_positions[ i + 5 ] = -1;
+					}
+				}
+				
+				g_lineGeometry.verticesNeedUpdate = true;
+				g_lineGeometry.attributes.position.needsUpdate = true;
+				g_lineGeometry.attributes.color.needsUpdate = true;
+				
 				
 				<!-- quick hacky display of numbers ->
 				document.getElementById("stats").innerHTML = "Total Active"

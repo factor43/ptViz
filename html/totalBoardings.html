@@ -266,22 +266,6 @@
 
 				mesh = new THREE.Line( geometry, material, THREE.LinePieces );
 				scene.add( mesh );
-			
-				
-				// boxes are slow :(
-				/*
-				var material = new THREE.MeshBasicMaterial( { color:0xFF0000 } );
-				var geometry = new THREE.BoxGeometry( 0.001, 0.001, 0.001 );
-				
-				stops.forEach(function(stop) {
-					
-					mesh = new THREE.Mesh( geometry, material );
-					mesh.position.x = stop.X;
-					mesh.position.y = stop.Y;
-					mesh.position.z = 0;
-					scene.add( mesh );
-				});
-				*/
 	
 				renderer = new THREE.WebGLRenderer( { antialias: true } );
 				container.appendChild( renderer.domElement );
@@ -289,7 +273,6 @@
 				onWindowResize();
 
 				window.addEventListener( 'resize', onWindowResize, false );
-
 			}
 			
 			function initPlane()
@@ -305,8 +288,6 @@
 				mesh.position.y = -0.175;
 				mesh.position.z = -0.001;
 				scene.add( mesh );
-				
-				
 			}
 
 			function onWindowResize( event ) {
@@ -317,31 +298,8 @@
 				camera.updateProjectionMatrix();
 
 				renderer.setSize( window.innerWidth, window.innerHeight );
-				
-				
-				// Ortho
-				/*
-				{
-					var aspect = window.innerWidth / window.innerHeight;
-					
-					camera.top = 1;
-					camera.bottom = -1;
-					
-					var halfWidth = aspect;
-					
-					camera.left = -halfWidth;
-					camera.right = halfWidth;
-					
-					camera.updateProjectionMatrix();
-
-					renderer.setSize( window.innerWidth, window.innerHeight );
-				}
-				*/
-
 			}
-
-			//
-
+			
 			function animate() {
 
 				requestAnimationFrame( animate );
